@@ -15,7 +15,16 @@ from mmpose.registry import VISUALIZERS
 from mmpose.structures import PoseDataSample
 from .opencv_backend_visualizer import OpencvBackendVisualizer
 from .simcc_vis import SimCCVisualizer
+from AR.get_labels import merge
+from AR.detection.det_lstm import detect_actions
+from decision.dynamic_threat import process_features, ThreatAssessment
+# from decision.dynamic_decison import DynamicAttackStrategy
+threat_model = ThreatAssessment()
+# attack_strategy = DynamicAttackStrategy()
 
+dy_data = None
+dy_res = None
+dy_target = None
 
 def _get_adaptive_scales(areas: np.ndarray,
                          min_area: int = 800,
@@ -113,7 +122,7 @@ class PoseLocalVisualizer(OpencvBackendVisualizer):
                  text_color: Optional[Union[str,
                                             Tuple[int]]] = (255, 255, 255),
                  skeleton: Optional[Union[List, Tuple]] = None,
-                 line_width: Union[int, float] = 1,
+                 line_width: Union[int, float] = 10,
                  radius: Union[int, float] = 3,
                  show_keypoint_weight: bool = False,
                  backend: str = 'opencv',
@@ -193,6 +202,7 @@ class PoseLocalVisualizer(OpencvBackendVisualizer):
         Returns:
             np.ndarray: the drawn image which channel is RGB.
         """
+        global dy_data, dy_res, dy_target
         self.set_image(image)
 
         if 'bboxes' in instances:
@@ -205,37 +215,112 @@ class PoseLocalVisualizer(OpencvBackendVisualizer):
         else:
             return self.get_image()
 
+        # 检测动作，识别动作
+        instances = detect_actions(instances)
+        actions = getattr(instances, "results", {})
+        #
+        # dy_data = instances.features
+        #
+        # # **计算当前帧的威胁指数**
+        # dy_res = process_features(instances, threat_model)
+        # threat_res = dy_res.dy_threat
+        #
+        # target_id, attack_scores = attack_strategy.select_attack_target(threat_res)
+        #
+        # dy_target = target_id
+        # print(f"✅ 选择打击目标: {target_id}")
+        # print(f"📌 各目标打击优先级: {attack_scores}")
+
+        # **获取全局威胁统计数据**
+
+
         if 'labels' in instances and self.text_color is not None:
-            classes = self.dataset_meta.get('classes', None)
+
+            # classes = self.dataset_meta.get('classes', None)
             labels = instances.labels
 
-            positions = bboxes[:, :2]
+            positions = bboxes[:, :2]  #左上角位置
             areas = (bboxes[:, 3] - bboxes[:, 1]) * (
                 bboxes[:, 2] - bboxes[:, 0])
             scales = _get_adaptive_scales(areas)
 
+            # 绘制目标框和id
             for i, (pos, label) in enumerate(zip(positions, labels)):
-                label_text = classes[
-                    label] if classes is not None else f'class {label}'
 
-                if isinstance(self.bbox_color,
-                              tuple) and max(self.bbox_color) > 1:
-                    facecolor = [c / 255.0 for c in self.bbox_color]
+                # label_text = classes[
+                #     label] if classes is not None else f'class {label}'
+                if isinstance(label, tuple):  # 如果label是元组，提取文本部分
+                    label = label[0]
+
+                if label == "person1":
+                    edge_color = (225, 0, 0)  # 红色框
+                    text_color = (225, 225, 225)  # 红色文字
+                elif label == "person2":
+                    edge_color = (0, 255, 0)  # 绿色框
+                    text_color = (225, 255, 225)  # 绿色文字
                 else:
-                    facecolor = self.bbox_color
+                    edge_color = self.bbox_color
+                    text_color = self.text_color
+                bboxes[i] = np.array(bboxes[i])
+                bbox = bboxes[i].reshape(1, 4)
+
+                # 绘制边界框
+                self.draw_bboxes(
+                    bbox,
+                    edge_colors=edge_color,
+                    alpha=self.alpha,
+                    line_widths=self.line_width,
+                )
+
+                # 绘制标签文字
+                self.draw_texts(
+                    label,
+                    pos,
+                    colors=text_color,
+                    font_sizes=int(30 * scales[i]),
+                    vertical_alignments="bottom",
+
+                    bboxes=[{
+                        "facecolor": edge_color,
+                        "alpha": 0.8,
+                        "pad": 0.7,
+                        "edgecolor": "none",
+                    }],
+                )
+
+                # 左上角绘制人物动作
+
+            base_x, base_y = 20, 40  # **左上角起始坐标**
+            y_offset = 30  # **文本间隔**
+            for i, (person_id, action) in enumerate(actions.items()):  # **遍历字典**
+                text_position = (base_x, base_y + i * y_offset)  # **计算文本位置**
+                text_color = (255, 255, 255)  # **白色文本**
 
                 self.draw_texts(
-                    label_text,
-                    pos,
-                    colors=self.text_color,
-                    font_sizes=int(13 * scales[i]),
-                    vertical_alignments='bottom',
-                    bboxes=[{
-                        'facecolor': facecolor,
-                        'alpha': 0.8,
-                        'pad': 0.7,
-                        'edgecolor': 'none'
-                    }])
+                    f"{person_id}: {action}",  # **示例："person1: Walk"**
+                    text_position,
+                    colors=text_color,
+                    font_sizes=30,
+                    vertical_alignments="top"
+                )
+                # if isinstance(self.bbox_color,
+                #               tuple) and max(self.bbox_color) > 1:
+                #     facecolor = [c / 255.0 for c in self.bbox_color]
+                # else:
+                #     facecolor = self.bbox_color
+                #
+                # self.draw_texts(
+                #     label_text,
+                #     pos,
+                #     colors=self.text_color,
+                #     font_sizes=int(13 * scales[i]),
+                #     vertical_alignments='bottom',
+                #     bboxes=[{
+                #         'facecolor': facecolor,
+                #         'alpha': 0.8,
+                #         'pad': 0.7,
+                #         'edgecolor': 'none'
+                #     }])
 
         return self.get_image()
 
@@ -654,8 +739,26 @@ class PoseLocalVisualizer(OpencvBackendVisualizer):
                     pred_img_data, data_sample.pred_instances, kpt_thr,
                     show_kpt_idx, skeleton_style)
                 if draw_bbox:
-                    pred_img_data = self._draw_instances_bbox(
-                        pred_img_data, data_sample.pred_instances)
+                    # pred_img_data = self._draw_instances_bbox(
+                    #     pred_img_data, data_sample.pred_instances)
+
+                    '''
+                    主代码修改逻辑，先实例化instances，
+                    将bboxes单独提出作为get_labels的输入获得label
+                    再将label值注入instances
+                    '''
+                    instances = data_sample.pred_instances
+
+                    # 如果包含bboxes，则进行颜色识别
+                    if 'bboxes' in instances:
+                        instances = merge(instances)
+
+                        # bboxes = instances.bboxes
+                        #
+                        # labels = self.get_labels(pred_img_data, bboxes)  # 根据bbox识别颜色并生成labels
+                        # instances.labels = labels  # 将识别的labels注入到instances中
+
+                        pred_img_data = self._draw_instances_bbox(pred_img_data, instances)
 
             # draw heatmaps
             if 'pred_fields' in data_sample and draw_heatmap:

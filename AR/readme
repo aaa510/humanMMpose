@@ -1,0 +1,8 @@
+前置数据准备阶段
+1. extract_points 用于从视频记录中提取骨骼点并保存至data/skeleton中
+2. extract_features 将skeleton数据进行归一化并提取速度、加速度特征
+3. train_lstm用于训练动作识别分类模型
+4. test_lstm用于检验动作分类模型的准确性
+5. feature获取骨骼点的速度、加速度、中心点速度、加速度等动作识别、决策特征
+6. det_lstm是基于骨骼点特征进行动作识别
+7. get_labels是在目标识别后进行颜色跟踪，这里输入的frame是input的frame，在base_mmpose_inferencer里面进行了全局定义

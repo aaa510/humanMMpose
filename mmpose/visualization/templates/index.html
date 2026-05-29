@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>实时视频流</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .video-container {
+            width: 100%;
+            margin-top: 20px;
+            text-align: center;
+        }
+        #videoStream {
+            max-width: 100%;
+            border-radius: 4px;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>实时视频流</h1>
+        <div class="video-container">
+            <img id="videoStream" src="" alt="视频流">
+        </div>
+        <div id="status" class="status disconnected">未连接</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        let socket = null;
+        const videoStream = document.getElementById('videoStream');
+        const statusElement = document.getElementById('status');
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        const reconnectDelay = 2000; // 2秒
+
+        function updateStatus(connected) {
+            statusElement.textContent = connected ? '已连接' : '未连接';
+            statusElement.className = `status ${connected ? 'connected' : 'disconnected'}`;
+        }
+
+        function tryConnect(port) {
+            return new Promise((resolve, reject) => {
+                const testSocket = io(`http://localhost:${port}`);
+                testSocket.on('connect', () => {
+                    testSocket.disconnect();
+                    resolve(port);
+                });
+                testSocket.on('connect_error', () => {
+                    reject();
+                });
+            });
+        }
+
+        async function findServerPort() {
+            for (let port = 5000; port <= 5010; port++) {
+                try {
+                    await tryConnect(port);
+                    return port;
+                } catch (e) {
+                    continue;
+                }
+            }
+            throw new Error('无法找到服务器');
+        }
+
+        async function connect() {
+            try {
+                const port = await findServerPort();
+                console.log(`Found server at port ${port}`);
+                
+                if (socket) {
+                    socket.disconnect();
+                }
+                
+                socket = io(`http://localhost:${port}`);
+                setupSocketEvents();
+            } catch (error) {
+                console.error('Failed to find server:', error);
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    setTimeout(connect, reconnectDelay);
+                } else {
+                    updateStatus(false);
+                }
+            }
+        }
+
+        function setupSocketEvents() {
+            socket.on('connect', () => {
+                console.log('Connected to server');
+                updateStatus(true);
+                reconnectAttempts = 0;
+            });
+
+            socket.on('disconnect', () => {
+                console.log('Disconnected from server');
+                updateStatus(false);
+                
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    console.log(`Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`);
+                    setTimeout(connect, reconnectDelay);
+                } else {
+                    console.log('Max reconnection attempts reached');
+                    updateStatus(false);
+                }
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('Connection error:', error);
+            });
+
+            socket.on('frame', (data) => {
+                videoStream.src = data;
+            });
+
+            socket.on('error', (data) => {
+                console.error('Server error:', data.message);
+            });
+        }
+
+        // 初始连接
+        connect();
+    </script>
+</body>
+</html>

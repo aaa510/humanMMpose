@@ -827,3 +827,141 @@ class OKSLoss(nn.Module):
             loss = loss.mean()
 
         return loss * self.loss_weight
+
+
+@MODELS.register_module()
+class AdaptiveWeightLoss(nn.Module):
+    """Adaptive Weight Loss for keypoint regression.
+    
+    This loss function dynamically adjusts weights based on:
+    1. Keypoint visibility
+    2. Prediction confidence
+    3. Historical error statistics
+    
+    Args:
+        use_target_weight (bool): Whether to use target weight.
+        loss_weight (float): Weight of the loss. Default: 1.0.
+        momentum (float): Momentum for updating error statistics. Default: 0.9.
+        min_weight (float): Minimum weight for any keypoint. Default: 0.1.
+        max_weight (float): Maximum weight for any keypoint. Default: 10.0.
+    """
+    
+    def __init__(self,
+                 use_target_weight=False,
+                 loss_weight=1.0,
+                 momentum=0.9,
+                 min_weight=0.1,
+                 max_weight=10.0):
+        super().__init__()
+        self.use_target_weight = use_target_weight
+        self.loss_weight = loss_weight
+        self.momentum = momentum
+        self.min_weight = min_weight
+        self.max_weight = max_weight
+        
+        # Initialize error statistics
+        self.register_buffer('error_stats', None)
+        
+    def forward(self, output, target, target_weight=None):
+        """Forward function.
+        
+        Args:
+            output (torch.Tensor[N, K, D]): Output regression.
+            target (torch.Tensor[N, K, D]): Target regression.
+            target_weight (torch.Tensor[N, K, D]): Weights across different joint types.
+        """
+        # Calculate current errors
+        errors = torch.norm(output - target, dim=-1)
+        
+        # Initialize error statistics if not done
+        if self.error_stats is None:
+            self.error_stats = errors.detach().mean(dim=0, keepdim=True)
+        
+        # Update error statistics with momentum
+        self.error_stats = self.momentum * self.error_stats + \
+                          (1 - self.momentum) * errors.detach().mean(dim=0, keepdim=True)
+        
+        # Calculate adaptive weights based on error statistics
+        adaptive_weights = torch.clamp(
+            1.0 / (self.error_stats + 1e-6),
+            min=self.min_weight,
+            max=self.max_weight
+        )
+        
+        # Combine with target weights if provided
+        if self.use_target_weight and target_weight is not None:
+            weights = adaptive_weights * target_weight
+        else:
+            weights = adaptive_weights
+            
+        # Calculate weighted loss
+        loss = (errors * weights).mean()
+        
+        return loss * self.loss_weight
+
+
+# @MODELS.register_module()
+# class CombinedLoss(nn.Module):
+#     """Combined Loss that integrates multiple loss functions.
+#
+#     This loss function combines:
+#     1. Coordinate regression loss (MSE/L1)
+#     2. OKS loss for keypoint similarity
+#     3. Smoothness loss for temporal consistency
+#
+#     Args:
+#         coord_loss (dict): Configuration for coordinate regression loss.
+#         oks_loss (dict): Configuration for OKS loss.
+#         smoothness_loss (dict): Configuration for temporal smoothness loss.
+#         loss_weights (dict): Weights for each loss component.
+#     """
+#
+#     def __init__(self,
+#                  coord_loss=dict(type='MSELoss', use_target_weight=True),
+#                  oks_loss=dict(type='OKSLoss', mode='log'),
+#                  smoothness_loss=dict(type='SmoothL1Loss'),
+#                  loss_weights=dict(coord=1.0, oks=0.5, smoothness=0.1)):
+#         super().__init__()
+#
+#         # Initialize loss components
+#         self.coord_loss = MODELS.build(coord_loss)
+#         self.oks_loss = MODELS.build(oks_loss)
+#         self.smoothness_loss = MODELS.build(smoothness_loss)
+#
+#         # Store loss weights
+#         self.loss_weights = loss_weights
+#
+#         # Store previous predictions for smoothness loss
+#         self.register_buffer('prev_pred', None)
+#
+#     def forward(self, output, target, target_weight=None, areas=None):
+#         """Forward function.
+#
+#         Args:
+#             output (torch.Tensor[N, K, D]): Current frame predictions.
+#             target (torch.Tensor[N, K, D]): Target coordinates.
+#             target_weight (torch.Tensor[N, K, D]): Weights for keypoints.
+#             areas (torch.Tensor[N]): Instance areas for OKS calculation.
+#         """
+#         # Calculate coordinate regression loss
+#         coord_loss = self.coord_loss(output, target, target_weight)
+#
+#         # Calculate OKS loss
+#         oks_loss = self.oks_loss(output, target, target_weight, areas)
+#
+#         # Calculate temporal smoothness loss if previous predictions exist
+#         smoothness_loss = 0.0
+#         if self.prev_pred is not None:
+#             smoothness_loss = self.smoothness_loss(output, self.prev_pred)
+#
+#         # Update previous predictions
+#         self.prev_pred = output.detach()
+#
+#         # Combine losses with weights
+#         total_loss = (
+#             self.loss_weights['coord'] * coord_loss +
+#             self.loss_weights['oks'] * oks_loss +
+#             self.loss_weights['smoothness'] * smoothness_loss
+#         )
+#
+#         return total_loss

@@ -29,6 +29,8 @@ from mmpose.registry import DATASETS
 from mmpose.structures import PoseDataSample, split_instances
 from .utils import default_det_models
 
+original_frame = None
+
 try:
     from mmdet.apis.det_inferencer import DetInferencer
     has_mmdet = True
@@ -168,6 +170,7 @@ class BaseMMPoseInferencer(BaseInferencer):
         Returns:
             list: List of input for the :meth:`preprocess`.
         """
+        global original_frame
         self._video_input = False
 
         if isinstance(inputs, str):
@@ -210,6 +213,7 @@ class BaseMMPoseInferencer(BaseInferencer):
                                      f'type {input_type}.')
 
         elif isinstance(inputs, np.ndarray):
+            original_frame = inputs  # ✅ 存储输入帧
             inputs = [inputs]
 
         return inputs
@@ -231,6 +235,7 @@ class BaseMMPoseInferencer(BaseInferencer):
         """
 
         # Ensure the inputs string is in the expected format.
+        global original_frame  # ✅ 确保 `original_frame` 可用
         inputs = inputs.lower()
         assert inputs.startswith('webcam'), f'Expected input to start with ' \
             f'"webcam", but got "{inputs}"'
@@ -260,10 +265,14 @@ class BaseMMPoseInferencer(BaseInferencer):
         (major_ver, minor_ver, subminor_ver) = (cv2.__version__).split('.')
         if int(major_ver) < 3:
             fps = vcap.get(cv2.cv.CV_CAP_PROP_FPS)
+            # vcap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+            # vcap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
             width = vcap.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH)
             height = vcap.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT)
         else:
             fps = vcap.get(cv2.CAP_PROP_FPS)
+            # vcap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+            # vcap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
             width = vcap.get(cv2.CAP_PROP_FRAME_WIDTH)
             height = vcap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.video_info = dict(
@@ -275,6 +284,7 @@ class BaseMMPoseInferencer(BaseInferencer):
             predictions=[])
 
         def _webcam_reader() -> Generator:
+            global original_frame  # ✅ 确保这里能修改 `original_frame`
             while True:
                 if cv2.waitKey(5) & 0xFF == 27:
                     vcap.release()
@@ -283,6 +293,8 @@ class BaseMMPoseInferencer(BaseInferencer):
                 ret_val, frame = vcap.read()
                 if not ret_val:
                     break
+
+                original_frame = frame  # ✅ 存储 `original_frame`
 
                 yield frame
 
@@ -334,6 +346,7 @@ class BaseMMPoseInferencer(BaseInferencer):
 
         # One-stage pose estimators perform prediction filtering within the
         # head's `predict` method. Here, we set the arguments for filtering
+        global original_frame
         if self.cfg.model.type == 'BottomupPoseEstimator':
             # 1. init with default arguments
             test_cfg = self.model.head.test_cfg.copy()
@@ -345,6 +358,8 @@ class BaseMMPoseInferencer(BaseInferencer):
             self.model.test_cfg = test_cfg
 
         for i, input in enumerate(inputs):
+            # 维护全局变量input用于后续颜色检测
+            original_frame = input
             bbox = bboxes[i] if bboxes else []
             data_infos = self.preprocess_single(
                 input,

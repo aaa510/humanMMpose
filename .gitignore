@@ -109,6 +109,7 @@ venv.bak/
 mmpose/.mim
 /models
 /data
+AR/data/
 .vscode
 .idea
 *.pkl
@@ -132,3 +133,5 @@ docs/**/modelzoo.md
 *.pth
 
 *.DS_Store
+*.mp4
+*.mp4
